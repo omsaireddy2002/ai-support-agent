@@ -1,6 +1,7 @@
 // agent.ts — the "agent loop": talk to Gemini, run the tools it asks for, repeat.
 import { GoogleGenAI, type Content, type Part } from "@google/genai";
 import { tools, functionDeclarations } from "./tickets.js"; // NodeNext needs the .js extension
+import { Conversation } from "./models.js";
 
 // The SDK reads the key from the environment; we never print it.
 const ai = new GoogleGenAI({
@@ -13,10 +14,8 @@ const MAX_STEPS = 10; // safety net so a confused model can't loop forever
 
 const SYSTEM_INSTRUCTION = `You are a helpful support-ticket assistant.
 - Always use the tools to read or change tickets. Never guess ticket data.
+- Always look up tickets first and wait for the results before changing them.
 - Before deleting a ticket, ask the user to confirm. Only call delete_ticket after they explicitly say yes.`;
-
-// One conversation history per sessionId (lost on server restart).
-const sessions = new Map<string, Content[]>();
 
 // What we report back about each tool call.
 export interface Step {
@@ -26,9 +25,11 @@ export interface Step {
 }
 
 export async function runAgent(sessionId: string, message: string) {
-  // Work on a COPY of the history. If anything fails mid-turn, the saved
-  // history stays untouched (no half-finished turns).
-  const history: Content[] = [...(sessions.get(sessionId) ?? [])];
+  // Load this session's saved history from MongoDB (empty for a new session).
+  // We change only this in-memory copy during the turn. If anything fails,
+  // nothing is saved, so the database never holds a half-finished turn.
+  const saved = await Conversation.findOne({ sessionId }).lean();
+  const history = (saved?.contents ?? []) as Content[];
   history.push({ role: "user", parts: [{ text: message }] });
 
   const steps: Step[] = [];
@@ -51,18 +52,22 @@ export async function runAgent(sessionId: string, message: string) {
     // 3. No tool calls? The model is done -> save history and return its text.
     const calls = response.functionCalls ?? [];
     if (calls.length === 0) {
-      sessions.set(sessionId, history);
+      // Upsert = update the session's document, or create it if it doesn't exist yet.
+      await Conversation.updateOne({ sessionId }, { contents: history }, { upsert: true });
       return { reply: response.text ?? "", steps };
     }
 
-    // 4. Run every tool the model asked for and collect the results.
+    // 4. Run every tool the model asked for, ONE AT A TIME, in order.
+    // `await` inside a for...of loop waits for each tool to finish before
+    // starting the next, so e.g. "get" always runs before "close" in a batch.
+    // (Promise.all would run them in parallel, and their order would be unpredictable.)
     const resultParts: Part[] = [];
     for (const call of calls) {
       const name = call.name ?? "";
       const tool = tools[name];
-      // structuredClone takes a snapshot NOW. Without it, a later tool in the
-      // same batch (e.g. close_ticket) would change objects inside this result.
-      const result = structuredClone(tool ? tool(call.args ?? {}) : { error: `Unknown tool: ${name}` });
+      // Tools return fresh plain objects from the database, so each result is
+      // already a safe snapshot (no structuredClone needed any more).
+      const result = tool ? await tool(call.args ?? {}) : { error: `Unknown tool: ${name}` };
       steps.push({ tool: name, args: call.args, result });
 
       resultParts.push({

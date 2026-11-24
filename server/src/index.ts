@@ -1,10 +1,11 @@
-// index.ts — the web server. Must load .env FIRST so GEMINI_API_KEY exists
-// before agent.ts creates the Gemini client.
+// index.ts — the web server. Must load .env FIRST so GEMINI_API_KEY and
+// MONGODB_URI exist before any other file reads them.
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import { connectDB } from "./db.js";
 import { runAgent } from "./agent.js";
-import { tickets } from "./tickets.js";
+import { listTickets, seedTickets } from "./tickets.js";
 
 const app = express();
 
@@ -32,10 +33,27 @@ app.post("/api/chat", async (req, res) => {
 });
 
 // See the current tickets (handy for checking what the agent did).
-app.get("/api/tickets", (_req, res) => {
-  res.json(tickets);
+app.get("/api/tickets", async (_req, res) => {
+  try {
+    res.json(await listTickets()); // same shape as before: [{ id, title, status, priority }]
+  } catch (err) {
+    console.error("Tickets error:", err);
+    res.status(500).json({ error: "Could not load tickets." });
+  }
 });
 
-app.listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
+// Start-up order matters: connect to the database first, add starter data
+// if needed, and only THEN accept requests.
+async function start() {
+  await connectDB();
+  await seedTickets();
+  app.listen(3000, () => {
+    console.log("Server running on http://localhost:3000");
+  });
+}
+
+start().catch((err: Error) => {
+  // Print only the message: some connection errors can echo the URI, which holds the password.
+  console.error("Failed to start:", err.message.replace(/mongodb(\+srv)?:\/\/\S+/g, "mongodb://<hidden>"));
+  process.exit(1);
 });

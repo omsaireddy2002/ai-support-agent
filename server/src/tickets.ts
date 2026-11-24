@@ -1,61 +1,99 @@
-// tickets.ts — our fake "database" plus the tools the AI is allowed to use.
+// tickets.ts — the tools the AI is allowed to use, now backed by MongoDB.
 import { Type, type FunctionDeclaration } from "@google/genai";
+import { Ticket } from "./models.js";
 
-// ---- Data shape ----
+// ---- Data shape the AI and the Angular app see ----
+// (Same as before: `id`, not Mongo's `ticketId`/`_id`, so nothing else has to change.)
 export type Status = "open" | "closed";
 export type Priority = "low" | "medium" | "high";
 
-export interface Ticket {
+export interface TicketData {
   id: number;
   title: string;
   status: Status;
   priority: Priority;
 }
 
-// ---- In-memory data (resets every time the server restarts) ----
-export const tickets: Ticket[] = [
-  { id: 1, title: "Login page is slow", status: "open", priority: "high" },
-  { id: 2, title: "Typo on pricing page", status: "open", priority: "low" },
-  { id: 3, title: "Payment fails for some cards", status: "open", priority: "high" },
-  { id: 4, title: "Add dark mode", status: "closed", priority: "medium" },
+// Turn a database document into the plain shape above.
+// Picking only these fields drops _id, __v, createdAt and updatedAt.
+function toTicket(doc: { ticketId: number; title: string; status: string; priority: string }): TicketData {
+  return {
+    id: doc.ticketId,
+    title: doc.title,
+    status: doc.status as Status,
+    priority: doc.priority as Priority,
+  };
+}
+
+// ---- Starter data, inserted only when the collection is empty ----
+const STARTER_TICKETS = [
+  { ticketId: 1, title: "Login page is slow", status: "open", priority: "high" },
+  { ticketId: 2, title: "Typo on pricing page", status: "open", priority: "low" },
+  { ticketId: 3, title: "Payment fails for some cards", status: "open", priority: "high" },
+  { ticketId: 4, title: "Add dark mode", status: "closed", priority: "medium" },
 ];
 
-let nextId = 5; // id for the next ticket we create
+export async function seedTickets() {
+  const count = await Ticket.countDocuments();
+  if (count === 0) {
+    await Ticket.insertMany(STARTER_TICKETS);
+    console.log("Inserted 4 starter tickets");
+  }
+}
+
+/** All tickets, sorted by id. Used by GET /api/tickets. */
+export async function listTickets(): Promise<TicketData[]> {
+  // .lean() returns plain JS objects instead of full Mongoose documents (faster, simpler).
+  const docs = await Ticket.find().sort({ ticketId: 1 }).lean();
+  return docs.map(toTicket);
+}
 
 // ---- Tool functions ----
-// Each tool takes one "args" object (that's how Gemini sends arguments)
-// and returns a plain object that we send back to the model.
+// Each tool takes one "args" object (that's how Gemini sends arguments),
+// talks to the database, and returns a plain object for the model.
+// Because they return fresh plain objects, results are safe snapshots:
+// a later tool can't change a result we already collected.
 
-function get_tickets(args: { status?: Status }) {
-  // No status given -> return everything.
-  const list = args.status ? tickets.filter((t) => t.status === args.status) : tickets;
-  return { tickets: list };
+async function get_tickets(args: { status?: Status }) {
+  // No status given -> {} means "match everything".
+  const filter = args.status ? { status: args.status } : {};
+  const docs = await Ticket.find(filter).sort({ ticketId: 1 }).lean();
+  return { tickets: docs.map(toTicket) };
 }
 
-function close_ticket(args: { id: number }) {
-  const ticket = tickets.find((t) => t.id === args.id);
-  if (!ticket) return { error: `Ticket ${args.id} not found` };
-  ticket.status = "closed";
-  return { ticket };
+async function close_ticket(args: { id: number }) {
+  // Find by our number id, set status, and return the UPDATED document.
+  const doc = await Ticket.findOneAndUpdate(
+    { ticketId: args.id },
+    { status: "closed" },
+    { returnDocument: "after" }
+  ).lean();
+  if (!doc) return { error: `Ticket ${args.id} not found` };
+  return { ticket: toTicket(doc) };
 }
 
-function create_ticket(args: { title: string; priority: Priority }) {
-  const ticket: Ticket = { id: nextId++, title: args.title, status: "open", priority: args.priority };
-  tickets.push(ticket);
-  return { ticket };
+async function create_ticket(args: { title: string; priority: Priority }) {
+  // Next id = highest existing id + 1 (or 1 if there are no tickets).
+  const last = await Ticket.findOne().sort({ ticketId: -1 }).lean();
+  const created = await Ticket.create({
+    ticketId: (last?.ticketId ?? 0) + 1,
+    title: args.title,
+    priority: args.priority, // status defaults to "open" in the schema
+  });
+  return { ticket: toTicket(created) };
 }
 
-function delete_ticket(args: { id: number }) {
-  const index = tickets.findIndex((t) => t.id === args.id);
-  if (index === -1) return { error: `Ticket ${args.id} not found` };
-  const [removed] = tickets.splice(index, 1);
-  return { deleted: removed };
+async function delete_ticket(args: { id: number }) {
+  const doc = await Ticket.findOneAndDelete({ ticketId: args.id }).lean();
+  if (!doc) return { error: `Ticket ${args.id} not found` };
+  return { deleted: toTicket(doc) };
 }
 
 // ---- Tool lookup: name -> function ----
 // The agent uses this to run whatever tool the model asks for, by name.
+// Every tool is async now, so each one returns a Promise.
 // `any` keeps it simple: the model's args arrive as untyped JSON anyway.
-export const tools: Record<string, (args: any) => unknown> = {
+export const tools: Record<string, (args: any) => Promise<unknown>> = {
   get_tickets,
   close_ticket,
   create_ticket,
