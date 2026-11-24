@@ -1,0 +1,55 @@
+<section class="panel chat" aria-label="Chat with the support agent">
+  <!-- aria-live makes screen readers announce new messages -->
+  <div class="messages" #list aria-live="polite">
+    @for (msg of messages(); track $index) {
+      <div class="bubble" [class.user]="msg.role === 'user'" [class.agent]="msg.role === 'agent'">
+        <span class="visually-hidden">{{ msg.role === 'user' ? 'You said:' : 'Agent said:' }}</span>
+        <!-- Plain text + CSS "pre-wrap" keeps line breaks and is safe (no HTML injection). -->
+        <p class="text">{{ msg.text }}</p>
+
+        @if (msg.steps?.length) {
+          <!-- <details> is a built-in collapsible element: no code needed. -->
+          <details class="steps">
+            <summary>Tool steps ({{ msg.steps!.length }})</summary>
+            <ol>
+              @for (step of msg.steps; track $index) {
+                <li>
+                  <strong>{{ step.tool }}</strong>
+                  <div class="label">Args</div>
+                  <pre>{{ step.args | json }}</pre>
+                  <div class="label">Result</div>
+                  <pre>{{ step.result | json }}</pre>
+                </li>
+              }
+            </ol>
+          </details>
+        }
+      </div>
+    } @empty {
+      <p class="hint">Ask me about your tickets, e.g. "Show open tickets" or "Close all high priority tickets".</p>
+    }
+
+    @if (thinking()) {
+      <div class="bubble agent thinking" role="status">thinking…</div>
+    }
+  </div>
+
+  @if (error()) {
+    <p class="error" role="alert">{{ error() }}</p>
+  }
+
+  <p id="message-help" class="help">Enter to send · Shift+Enter for a new line</p>
+
+  <form class="composer" (submit)="onSubmit($event)">
+    <label for="message" class="visually-hidden">Message</label>
+    <textarea
+      id="message"
+      rows="2"
+      placeholder="Type a message…"
+      aria-describedby="message-help"
+      [formField]="chatForm.text"
+      (keydown)="onKeydown($event)"
+    ></textarea>
+    <button type="submit" [disabled]="thinking() || !chatForm.text().value().trim()">Send</button>
+  </form>
+</section>

@@ -1,0 +1,74 @@
+/* Global styles: colours live here as variables, so every component shares them
+   and dark mode only needs to change these values. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1c1e21;
+  --border: #dde1e6;
+  --muted-bg: #eef0f3;
+  --muted-text: #555b65;
+  --accent: #2557d6;
+  --accent-text: #ffffff;
+  --error-bg: #fde8e8;
+  --error-text: #a01b1b;
+  --ok-bg: #e3f5e8;
+  --ok-text: #1b6b34;
+  --warn-bg: #fff2d6;
+  --warn-text: #7a4b00;
+  --info-bg: #e5eefc;
+  --info-text: #1f4aa8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171a;
+    --surface: #1e2125;
+    --text: #e8eaed;
+    --border: #33373d;
+    --muted-bg: #2a2e33;
+    --muted-text: #a9afb8;
+    --accent: #4a7cf0;
+    --accent-text: #ffffff;
+    --error-bg: #4a1f1f;
+    --error-text: #ffb4b4;
+    --ok-bg: #1d3a26;
+    --ok-text: #9be0b0;
+    --warn-bg: #3d3018;
+    --warn-text: #f5d08a;
+    --info-bg: #1f2d4a;
+    --info-text: #a9c4ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Shared card look used by both panels. */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-height: 0;
+}
+
+button {
+  font: inherit; padding: 0.5rem 1rem; border-radius: 8px; border: none; cursor: pointer;
+  background: var(--accent); color: var(--accent-text);
+}
+button.secondary { background: var(--muted-bg); color: var(--text); border: 1px solid var(--border); }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Clear keyboard focus ring for accessibility. */
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* Text only screen readers see. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
